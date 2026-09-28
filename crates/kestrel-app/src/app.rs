@@ -66,6 +66,11 @@ pub struct App {
     pub rendering: Rc<dyn servo::RenderingContext>,
     /// Per-site permission decisions, consulted before any capability is granted.
     pub permission_store: Vec<SitePermission>,
+    /// The suggestion list shown for the current omnibox text, so a click on a
+    /// row can be resolved back to the row the user actually saw.
+    pub current_suggestions: Vec<kestrel_ui::toolbar::Suggestion>,
+    /// Where web content is drawn, in egui points.
+    pub content_rect: egui::Rect,
     pub omnibox: OmniboxState,
     pub omnibox_text: String,
     pub pending: PendingActions,
@@ -122,6 +127,11 @@ impl App {
             views: HashMap::new(),
             rendering,
             permission_store: Vec::new(),
+            current_suggestions: Vec::new(),
+            content_rect: egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 700.0),
+            ),
             omnibox: OmniboxState::default(),
             omnibox_text: String::new(),
             pending: PendingActions::default(),
@@ -184,6 +194,58 @@ impl App {
         omnibox::default_search_engines()
             .into_iter()
             .find(|e| e.id == self.settings.search_engine)
+    }
+
+    // --- Actions driven by the interface. Each one mutates real state so that
+    // every control in the UI has an observable effect.
+
+    pub fn go_back(&mut self) {
+        let url = self.strip.active_tab_mut().and_then(|t| t.go_back()).map(|s| s.to_string());
+        if let Some(u) = url {
+            self.pending.navigate = Some(u);
+        }
+    }
+
+    pub fn go_forward(&mut self) {
+        let url = self.strip.active_tab_mut().and_then(|t| t.go_forward()).map(|s| s.to_string());
+        if let Some(u) = url {
+            self.pending.navigate = Some(u);
+        }
+    }
+
+    pub fn reload(&mut self) {
+        if let Some(t) = self.strip.active_tab() {
+            self.pending.navigate = Some(t.url.clone());
+        }
+    }
+
+    pub fn new_tab(&mut self) {
+        self.strip.open("about:newtab");
+        self.page = Page::NewTab;
+        self.save_session();
+    }
+
+    pub fn close_active_tab(&mut self) {
+        if let Some(t) = self.strip.close_active() {
+            self.store.history.lock().unwrap_or_else(|e| e.into_inner()).add_closed(&t.url);
+        }
+        if self.strip.active_tab().map(|t| t.url.as_str()) == Some("about:newtab") {
+            self.page = Page::NewTab;
+        }
+        self.save_session();
+    }
+
+    pub fn toggle_mute(&mut self, id: u64) {
+        if let Some(t) = self.strip.get_mut(id) {
+            t.muted = !t.muted;
+        }
+    }
+
+    /// Apply a queued navigation to the active tab. Called once per frame after
+    /// the interface has finished mutating state, so the engine sees a settled
+    /// view rather than a partially updated one.
+    pub fn take_navigation(&mut self) -> Option<String> {
+        self.pending.navigate.take()
     }
 
     /// The network decision for one request, made on a Servo network thread.
