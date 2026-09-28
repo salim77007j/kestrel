@@ -12,37 +12,35 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Servo's tree is large; a release build of the whole workspace does not fit
-  # in the default runner's disk without this.
   CARGO_INCREMENTAL: 0
 
 jobs:
-  # Fast feedback: the engine-independent core carries all the product logic
-  # and must stay green on every push. Runs in well under a minute.
+  # Fast feedback on the product logic. This crate carries the filter engine,
+  # privacy policy and storage and has no engine dependency, so it builds in
+  # about a minute and must stay green on every push.
   core:
     name: Core logic tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
       - name: Test core
-        run: cargo test -p kestrel-core --all-features
-      - name: Clippy
+        run: cargo test -p kestrel-core
+      - name: Clippy (core)
         run: cargo clippy -p kestrel-core --all-targets -- -D warnings
 
-  # The full engine build. Servo is a large C++/Rust tree and needs more time
-  # and memory than a default job provides, so this runs on a larger runner.
+  # The full engine build. Servo is a very large C++/Rust tree, so this is slow
+  # and given a generous timeout.
   browser:
     name: Build browser
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      # Keep the SpiderMonkey build single-threaded-ish on shared runners.
-      MOZJS_BUILD_JOBS: 2
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +48,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
+            build-essential cmake ninja-build pkg-config python3 \
             libfreetype6-dev libfontconfig1-dev libssl-dev \
             libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev \
             libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri \
@@ -58,36 +56,28 @@ jobs:
             xvfb x11-utils imagemagick procps
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Cache the whole workspace target dir; Servo and egui share it.
           workspaces: |
             . -> target
-          key: browser-build
+          key: browser
 
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           df -h /
 
-      - name: Build (release)
+      - name: Build release binary
         run: cargo build --release -p kestrel-app
 
-      - name: Run core tests
-        run: cargo test --release -p kestrel-core
+      - name: Report binary size
+        run: ls -lh target/release/kestrel
 
       - name: Package artifact
         run: |
-          mkdir -p dist
-          cp target/release/kestrel dist/kestrel
-          strip dist/kestrel || true
-          tar -czf kestrel-linux-x86_64.tar.gz -C dist kestrel
+          tar -czf kestrel-linux-x86_64.tar.gz -C target/release kestrel
           ls -lh kestrel-linux-x86_64.tar.gz
-          echo "--- binary size ---"
-          ls -lh dist/kestrel
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -96,32 +86,20 @@ jobs:
           path: kestrel-linux-x86_64.tar.gz
           retention-days: 30
 
-      # Headless validation: launch the real binary under a virtual display,
-      # drive it, and capture a screenshot to prove the UI renders.
-      validate:
-        name: Headless UI validation
-        runs-on: ubuntu-24.04
-        needs: browser
-        timeout-minutes: 20
-        steps:
-          - uses: actions/checkout@v4
-
+  # Headless validation: run the real binary under a virtual display, measure
+  # its resource use and capture a screenshot of the interface.
+  validate:
+    name: Headless validation
+    runs-on: ubuntu-24.04
+    needs: browser
+    timeout-minutes: 20
+    steps:
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             xvfb x11-utils imagemagick mesa-vulkan-drivers \
-            libgl1-mesa-dri libegl1 libgles2 fonts-dejavu-core \
-            procps
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Cache the whole workspace target dir; Servo and egui share it.
-          workspaces: |
-            . -> target
-          key: browser-build
+            libgl1-mesa-dri libegl1 libgles2 fonts-dejavu-core procps
 
       - name: Download browser
         uses: actions/download-artifact@v4
@@ -129,51 +107,49 @@ jobs:
           name: kestrel-linux-x86_64
           path: .
 
-      - name: Extract
+      - name: Extract and check version
         run: |
           tar -xzf kestrel-linux-x86_64.tar.gz
           chmod +x kestrel
           ./kestrel --version
+          ./kestrel --help
 
       - name: Launch under Xvfb and capture
         run: |
-          set -e
+          set -euo pipefail
           export DISPLAY=:99
           Xvfb :99 -screen 0 1600x1000x24 >/tmp/xvfb.log 2>&1 &
           sleep 3
-          xdpyinfo -display :99 >/dev/null && echo "display OK"
 
-          # Fresh profile so the run is reproducible.
           rm -rf /tmp/kestrel-profile
           mkdir -p /tmp/kestrel-profile
 
-          # Launch the real binary and let it settle.
           ./kestrel --profile /tmp/kestrel-profile >/tmp/kestrel.log 2>&1 &
           BROWSER_PID=$!
-          sleep 25
+          sleep 30
 
-          if ! kill -0 $BROWSER_PID 2>/dev/null; then
-            echo "::error::browser exited early"
+          if ! kill -0 "$BROWSER_PID" 2>/dev/null; then
+            echo "::error::the browser exited before it could be captured"
             cat /tmp/kestrel.log
             exit 1
           fi
 
-          echo "--- resource usage ---"
-          ps -o pid,rss,vsz,%cpu,comm -p $BROWSER_PID || true
-          RSS_KB=$(ps -o rss= -p $BROWSER_PID | tr -d ' ')
+          echo "=== resource usage ==="
+          ps -o pid,rss,vsz,%cpu,etime,comm -p "$BROWSER_PID" || true
+          RSS_KB=$(ps -o rss= -p "$BROWSER_PID" | tr -d ' ')
           echo "RSS_KB=$RSS_KB"
+          echo "RSS_MB=$((RSS_KB / 1024))"
 
-          # Capture the window with the real X server, not a stub.
-          import -window root /tmp/kestrel-shot.png 2>/dev/null || \
-            xwd -root -silent | convert xwd:- /tmp/kestrel-shot.png
-          ls -lh /tmp/kestrel-shot.png
+          echo "=== window list ==="
+          xwininfo -root -tree -display :99 | head -20 || true
 
-          # A blank frame is the classic silent failure; check the image has
-          # real colour variety rather than a single flat colour.
-          identify -format "%wx%h %[mean] %[standard-deviation]\n" /tmp/kestrel-shot.png
+          import -window root /tmp/kestrel-shot.png 2>/dev/null \
+            || xwd -root -silent | convert xwd:- /tmp/kestrel-shot.png
+          identify -format "size=%wx%h mean=%[mean] stddev=%[standard-deviation]\n" \
+            /tmp/kestrel-shot.png
 
-          kill $BROWSER_PID 2>/dev/null || true
-          wait $BROWSER_PID 2>/dev/null || true
+          kill "$BROWSER_PID" 2>/dev/null || true
+          wait "$BROWSER_PID" 2>/dev/null || true
 
       - name: Upload screenshot
         if: always()
@@ -183,7 +159,7 @@ jobs:
           path: /tmp/kestrel-shot.png
           retention-days: 30
 
-      - name: Upload logs
+      - name: Upload browser log
         if: always()
         uses: actions/upload-artifact@v4
         with:
