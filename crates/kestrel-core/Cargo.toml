@@ -1,0 +1,29 @@
+[package]
+name = "kestrel-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Engine-independent browser core: URL handling, filtering, privacy and storage for the Kestrel browser."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+idna.workspace = true
+percent-encoding.workspace = true
+aho-corasick.workspace = true
+once_cell.workspace = true
+time.workspace = true
+sha2.workspace = true
+base64.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+log.workspace = true
+dirs.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

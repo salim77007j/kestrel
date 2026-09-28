@@ -1,0 +1,15 @@
+[package]
+name = "kestrel-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kestrel browser chrome: tabs, toolbar, new tab page, settings and privacy dashboard."
+
+[dependencies]
+kestrel-core.workspace = true
+egui.workspace = true
+url.workspace = true
+serde.workspace = true
+serde_json.workspace = true

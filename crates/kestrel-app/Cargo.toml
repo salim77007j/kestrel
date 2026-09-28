@@ -1,0 +1,43 @@
+[package]
+name = "kestrel-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kestrel: an independent, privacy-first web browser built on the Servo engine."
+
+[[bin]]
+name = "kestrel"
+path = "src/main.rs"
+
+[dependencies]
+kestrel-core.workspace = true
+kestrel-ui.workspace = true
+
+# Engine
+servo.workspace = true
+
+# UI / windowing
+egui.workspace = true
+egui-winit.workspace = true
+egui-wgpu.workspace = true
+winit.workspace = true
+raw-window-handle = "0.6"
+
+# GPU
+wgpu = { version = "25", default-features = false, features = ["vulkan", "gles", "webgl"] }
+
+# Runtime
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+image = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+sha2.workspace = true
+getrandom = "0.2"
+rustls = { workspace = true }
+aws-lc-rs = { workspace = true }
+tracing = { workspace = true }
