@@ -28,7 +28,7 @@ use kestrel_core::store::{
 use kestrel_ui::icons::{self, Icon};
 use kestrel_ui::pages::SettingsIntent;
 use kestrel_ui::tab_strip::ContextAction;
-use kestrel_ui::tabs::{Page, Tab, TabState, TabStrip};
+use kestrel_ui::tabs::{Page, SitePermission, Tab, TabState, TabStrip};
 use kestrel_ui::theme;
 use kestrel_ui::toolbar::{self as tb, OmniboxState, Suggestion, ToolbarData};
 
@@ -62,7 +62,10 @@ pub struct App {
     pub pseudonymiser: Pseudonymiser,
     /// Live engine views, keyed by tab id.
     pub views: HashMap<u64, servo::WebView>,
-    pub rendering: Rc<servo::WindowRenderingContext>,
+    /// The offscreen surface Servo renders page content into.
+    pub rendering: Rc<dyn servo::RenderingContext>,
+    /// Per-site permission decisions, consulted before any capability is granted.
+    pub permission_store: Vec<SitePermission>,
     pub omnibox: OmniboxState,
     pub omnibox_text: String,
     pub pending: PendingActions,
@@ -84,7 +87,6 @@ impl App {
     pub fn new(
         store: Arc<Store>,
         filters: Arc<FilterEngine>,
-        rendering: Rc<servo::WindowRenderingContext>,
         engine: Option<servo::Servo>,
     ) -> Self {
         let settings = store.settings();
@@ -119,6 +121,7 @@ impl App {
             pseudonymiser,
             views: HashMap::new(),
             rendering,
+            permission_store: Vec::new(),
             omnibox: OmniboxState::default(),
             omnibox_text: String::new(),
             pending: PendingActions::default(),

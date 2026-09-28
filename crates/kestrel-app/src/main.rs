@@ -13,6 +13,7 @@
 //! run on a software adapter when no GPU is present.
 
 mod app;
+mod delegate;
 mod engine;
 mod render;
 
