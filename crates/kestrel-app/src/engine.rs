@@ -35,6 +35,8 @@ pub struct Shared {
     pub dirty: RefCell<Vec<u64>>,
     /// Engine views by tab id.
     pub views: RefCell<HashMap<u64, WebView>>,
+    /// The offscreen surface Servo renders page content into.
+    pub rendering: RefCell<Option<Rc<dyn RenderingContext>>>,
     pub redraw: Cell<bool>,
     pub quit: Cell<bool>,
     /// Frames rendered, for the perf report.
@@ -92,6 +94,7 @@ impl EngineHost {
                 frames: RefCell::new(HashMap::new()),
                 dirty: RefCell::new(Vec::new()),
                 views: RefCell::new(HashMap::new()),
+                rendering: RefCell::new(None),
                 redraw: Cell::new(true),
                 quit: Cell::new(false),
                 frames_rendered: Cell::new(0),

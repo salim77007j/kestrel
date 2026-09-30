@@ -108,8 +108,6 @@ struct CompiledRule {
     domain: Option<String>,
     /// Exceptions (`@@`) override blocking rules.
     exception: bool,
-    /// Cosmetic rules carry a CSS snippet instead of matching URLs.
-    cosmetic: bool,
     /// The literal substrings this rule matches on, one automaton pattern each.
     /// Kept here so the engine can register every rule's patterns in a single
     /// pass and look the rule up again from the match id.
@@ -132,8 +130,6 @@ pub struct FilterEngine {
     /// Cosmetic CSS keyed by the document hostname.
     cosmetic: HashMap<String, Vec<String>>,
     cosmetic_generic: Vec<String>,
-    /// Hosts explicitly allowed, which bypass matching entirely.
-    allowlist: Vec<String>,
     stats: parking_lot_lite::Mutex<Stats>,
 }
 
@@ -179,7 +175,6 @@ impl FilterEngine {
             std::collections::HashSet::new();
         let mut cosmetic: HashMap<String, Vec<String>> = HashMap::new();
         let mut cosmetic_generic: Vec<String> = Vec::new();
-        let mut allowlist: Vec<String> = Vec::new();
 
         let mut next_pattern_id = 0u32;
         for line in lines {
@@ -199,9 +194,6 @@ impl FilterEngine {
                         Some(d) => cosmetic.entry(d).or_default().push(selector),
                         None => cosmetic_generic.push(selector),
                     }
-                }
-                ParsedRule::AllowHost(host) => {
-                    allowlist.push(host.to_ascii_lowercase());
                 }
                 ParsedRule::Network(r) => {
                     let idx = rules.len();
@@ -249,7 +241,6 @@ impl FilterEngine {
             exception_needles,
             cosmetic,
             cosmetic_generic,
-            allowlist,
             stats: parking_lot_lite::Mutex::new(Stats::default()),
         })
     }
@@ -272,10 +263,6 @@ impl FilterEngine {
     pub fn check(&self, url: &str, resource: ResourceType) -> Decision {
         self.stats.lock().requests += 1;
 
-        if self.allowlist.iter().any(|h| url.contains(h.as_str())) {
-            return Decision::Allow;
-        }
-
         let hay = url.to_ascii_lowercase();
         let mut blocked: Option<BlockReason> = None;
 
@@ -297,7 +284,8 @@ impl FilterEngine {
             }
             // If an exception rule covers this exact needle, the request is
             // explicitly allowlisted and must not be blocked.
-            if self.exception_needles.contains(&hay[m.start()..m.end()].to_string()) {
+            let needle = &hay[m.start()..m.end()];
+            if self.exception_needles.contains(needle) {
                 return Decision::Allow;
             }
             blocked = Some(BlockReason {
@@ -357,8 +345,10 @@ fn push_rule(out: &mut String, selector: &str) {
 }
 
 enum ParsedRule {
-    Cosmetic { selector: String, domain: Option<String> },
-    AllowHost(String),
+    Cosmetic {
+        selector: String,
+        domain: Option<String>,
+    },
     Network(CompiledRule),
     Unsupported,
 }
@@ -420,7 +410,6 @@ fn parse_rule(line: &str) -> ParsedRule {
             types: None,
             domain: Some(domain.clone()),
             exception,
-            cosmetic: false,
             needles: vec![domain],
         });
     }
@@ -474,7 +463,6 @@ fn parse_rule(line: &str) -> ParsedRule {
         types,
         domain: None,
         exception,
-        cosmetic: false,
         needles: vec![needle],
     })
 }

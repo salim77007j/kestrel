@@ -499,8 +499,10 @@ mod tests {
 
     #[test]
     fn kill_switch_disables_everything() {
-        let mut c = PrivacyConfig::default();
-        c.enabled = false;
+        let c = PrivacyConfig {
+            enabled: false,
+            ..Default::default()
+        };
         assert!(c.active().is_empty());
     }
 

@@ -28,7 +28,7 @@ eframe = "0.36"
 egui-winit = "0.36"
 egui-wgpu = "0.36"
 egui_glow = "0.36"
-winit = "0.30"
+winit = "0.30.13"
 
 # --- async / event loop ---
 crossbeam-channel = "0.5"

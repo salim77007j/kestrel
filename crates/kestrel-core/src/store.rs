@@ -166,13 +166,7 @@ impl HistoryStore {
     pub fn record(&mut self, url: &str, title: &str) {
         let t = now_secs();
         if let Some(e) = self.entries.iter_mut().find(|e| e.url == url) {
-            // Collapse visits inside the same minute: a page that fires many
-            // navigations should not fill the store.
-            if e.last_visit().saturating_sub(t) < 60 {
-                e.visits.push(t);
-            } else {
-                e.visits.push(t);
-            }
+            e.visits.push(t);
             if !title.is_empty() {
                 e.title = title.to_string();
             }

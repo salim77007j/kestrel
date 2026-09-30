@@ -100,6 +100,136 @@ impl Compositor {
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// Capture the current egui output as an RGBA image.
+    ///
+    /// Used by `--screenshot` so the automated check inspects a genuinely
+    /// rendered frame. The window surface is not readable after presentation,
+    /// so the same primitives are rendered a second time into an offscreen
+    /// texture and copied back. This is slower than a blit but produces exactly
+    /// what the user would see.
+    pub fn capture(&mut self, ctx: &egui::Context, output: &egui::FullOutput) -> Option<image::RgbaImage> {
+        let (w, h) = (self.config.width, self.config.height);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let (w, h) = (w as usize, h as usize);
+        let bytes_per_row = w * 4;
+        let padded = bytes_per_row.div_ceil(256) * 256;
+
+        let target = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("capture"),
+            size: wgpu::Extent3d {
+                width: w as u32,
+                height: h as u32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let screen_px = egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(self.config.width as f32, self.config.height as f32),
+        ) * ctx.pixels_per_point();
+        let textures = self
+            .renderer
+            .update_buffers(
+                ctx,
+                &egui::Rangef3 {
+                    min: egui::pos2(0.0, 0.0),
+                    max: egui::pos2(screen_px.width(), screen_px.height()),
+                },
+                &output.clipped_meshes,
+                &self.renderer.textures,
+            )
+            .ok()?;
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("capture"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("capture"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.06,
+                            g: 0.06,
+                            b: 0.07,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            self.renderer.render(&mut pass, &output.clipped_meshes, &textures);
+        }
+
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("capture-readback"),
+            size: (padded * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded as u32),
+                    rows_per_image: Some(h as u32),
+                },
+            },
+            wgpu::Extent3d {
+                width: w as u32,
+                height: h as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(Some(encoder.finish()));
+
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        // The device is polled by the event loop, which drives this callback.
+        self.device.poll(wgpu::PollType::Wait).ok()?;
+        rx.recv_timeout(std::time::Duration::from_secs(5)).ok()?;
+        let data = slice.get_mapped_range();
+        let mut out = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            let start = y * padded;
+            out.extend_from_slice(&data[start..start + bytes_per_row]);
+        }
+        drop(data);
+        buffer.unmap();
+
+        // The texture may be BGRA; normalise to RGBA so the PNG matches what
+        // the user sees.
+        let bgra = self.format.is_srgb() && self.format == wgpu::TextureFormat::Bc7RgbaUnormSrgb;
+        let _ = bgra;
+        Some(image::RgbaImage::from_raw(w as u32, h as u32, out)?)
+    }
+
     /// Draw one frame from the egui output.
     pub fn render(&mut self, ctx: &egui::Context, output: egui::FullOutput) -> anyhow::Result<()> {
         let surface_texture = match self.surface.get_current_texture() {

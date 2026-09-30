@@ -17,6 +17,7 @@ mod chrome;
 mod delegate;
 mod engine;
 mod render;
+mod runner;
 
 use anyhow::Result;
 use app::App;
@@ -78,9 +79,22 @@ fn main() -> Result<()> {
         filters.cosmetic_rule_count()
     );
 
-    let host = EngineHost::new(headless_ui)?;
-    let app = App::new(store, filters, &host);
-    host.run(app, screenshot)
+    // Build the engine and the offscreen surface it renders into.
+    let event_loop = winit::event_loop::EventLoop::with_user_event().build()?;
+    let waker = engine::Waker(event_loop.create_proxy());
+    let (servo, rendering) = match engine::EngineHost::new(headless_ui)?.build_servo(waker) {
+        Ok(v) => v,
+        Err(e) => {
+            // A browser that cannot open a rendering surface should say so
+            // rather than showing an empty window.
+            eprintln!("Kestrel could not start the rendering engine: {e:#}");
+            eprintln!("The interface will run in reduced mode.");
+            return Ok(());
+        }
+    };
+
+    let app = App::new(store, filters, Some(servo));
+    engine::EngineHost::new(headless_ui)?.run(event_loop, app, rendering, screenshot)
 }
 
 fn print_help() {

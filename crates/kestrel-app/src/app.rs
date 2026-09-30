@@ -71,6 +71,9 @@ pub struct App {
     pub current_suggestions: Vec<kestrel_ui::toolbar::Suggestion>,
     /// Where web content is drawn, in egui points.
     pub content_rect: egui::Rect,
+    /// The most recent composited page image, uploaded to the GPU each frame
+    /// the engine produces one.
+    pub page_texture: Option<egui::TextureHandle>,
     pub omnibox: OmniboxState,
     pub omnibox_text: String,
     pub pending: PendingActions,
@@ -132,6 +135,7 @@ impl App {
                 egui::Pos2::ZERO,
                 egui::vec2(1280.0, 700.0),
             ),
+            page_texture: None,
             omnibox: OmniboxState::default(),
             omnibox_text: String::new(),
             pending: PendingActions::default(),

@@ -26,7 +26,9 @@ winit.workspace = true
 raw-window-handle = "0.6"
 
 # GPU
-wgpu = { version = "25", default-features = false, features = ["vulkan", "gles", "webgl"] }
+# Must match egui-wgpu 0.36, which requires wgpu ^30. A mismatched major pulls a
+# second, incompatible copy of naga and the build fails deep in the tree.
+wgpu = "30"
 
 # Runtime
 anyhow.workspace = true
